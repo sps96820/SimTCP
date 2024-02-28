@@ -5,10 +5,15 @@ import typing
 import struct
 import util
 import util.logging
+import pandas as pd
+from statistics import mean
 
 # Constants for packet type
 DATA_PACKET = 0
 ACK_PACKET = 1
+global queue
+queue = []
+
 def send(sock: socket.socket, data: bytes):
     """
     Implementation of the sending logic for sending data over a slow,
@@ -43,11 +48,36 @@ def send(sock: socket.socket, data: bytes):
                     #print("in send while")
                     ack_type, ack_sequence = struct.unpack("!HH", ack)
                     if ack_type == ACK_PACKET and ack_sequence == sequence_number:
+                        elapsed_time = time.time() - start_time
+                        queue.append(elapsed_time)
+                        RTT_series = pd.Series(queue)
+
+                        if len(queue) > 10:
+                            queue.clear()
+
+                        moving_averages = round(RTT_series.ewm(
+                            alpha = 1, adjust = True 
+                        ).mean(), 5)
+
+                        moving_averages_list = moving_averages.tolist()
+                        sock.settimeout(mean(moving_averages_list))
+                        print("\n")
+                        print(mean(moving_averages_list))
+                        print("\n")
                         logger.info("Received ACK for sequence number %d", sequence_number)
                         print("\n ack received")
                         break
                 except socket.timeout:
                     elapsed_time = time.time() - start_time
+                    queue.append(elapsed_time)
+                    RTT_series = pd.Series(queue)
+
+                    moving_averages = round(RTT_series.ewm(
+                        alpha = 0.5, adjust = False 
+                    ).mean(), 2)
+
+                    moving_averages_list = moving_averages.tolist()
+                    sock.settimeout(mean(moving_averages_list))
                     if elapsed_time >= timeout:
                         logger.error("Timeout waiting for ACK. Resending packet with sequence number %d", sequence_number)
                         sock.send(packet)
@@ -58,7 +88,7 @@ def send(sock: socket.socket, data: bytes):
             sequence_number = 1 - sequence_number
 
             logger.info("Pausing for %f seconds", round(pause, 2))
-            time.sleep(pause)
+            #time.sleep(pause)
     except socket.error as e:
         logger.error("Socket error occurred: %s", str(e))
 
